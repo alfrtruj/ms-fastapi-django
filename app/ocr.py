@@ -13,3 +13,4 @@ preds = pytesseract.image_to_string(img)
 predictions = [x for x in preds.split("\n")]
 
 print(predictions)
+print(preds)

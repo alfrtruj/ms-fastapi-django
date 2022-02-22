@@ -3,7 +3,16 @@ import os
 import io
 from functools import lru_cache
 import uuid
-from fastapi import Depends, FastAPI, Request, UploadFile, File, HTTPException
+import pytesseract
+from fastapi import (
+    Depends,
+    Header,
+    FastAPI,
+    Request,
+    UploadFile,
+    File,
+    HTTPException
+    )
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseSettings
@@ -11,8 +20,10 @@ from PIL import Image
 
 
 class Settings(BaseSettings): #manage the debug variable for development or production
+    app_auth_token: str
     debug: bool = False
     echo_active: bool = False
+    skip_auth: bool = False
 
     class Config:
         env_file = ".env"
@@ -23,22 +34,45 @@ def get_settings():
 
 settings = get_settings()
 DEBUG=settings.debug
-print(DEBUG)
 
 BASE_DIR = pathlib.Path(__file__).parent
 UPLOAD_DIR = BASE_DIR / "uploads"
+pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract'
 
 app = FastAPI() #REST API
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates")) # print(BASE_DIR / "templates") - to check the path
 
+
 @app.get("/", response_class=HTMLResponse) #http GET -- return json
 def home_view(request: Request, settings: Settings = Depends(get_settings)):
-    return templates.TemplateResponse("home.html", {"request": request})
+    return templates.TemplateResponse("home.html", {"request": request, "abc":123})
+
+
+def verify_auth(authorization = Header(None), settings:Settings = Depends(get_settings)):
+    """
+    Authorization: Bearer <token>
+    {"authorization": "Bearer <token>"}
+    """
+    if settings.debug and settings.skip_auth:
+        return
+    if authorization is None:
+        raise HTTPException(detail="Invalid endpoint", status_code=401)
+    label, token = authorization.split()
+    if token != settings.app_auth_token:
+        raise HTTPException(detail="Invalid endpoint", status_code=401)
 
 
 @app.post("/") #http POST
-def home_detail_view():
-    return {"hello": "world"}
+async def prediction_view(file:UploadFile = File(...), authorization = Header(None), settings:Settings = Depends(get_settings)):
+    verify_auth(authorization, settings)
+    bytes_str = io.BytesIO(await file.read())
+    try:
+        img = Image.open(bytes_str)
+    except:
+        raise HTTPException(detail="Invalid image", status_code=400)
+    preds = pytesseract.image_to_string(img)
+    predictions = [x for x in preds.split("\n")]
+    return {"results": predictions, "original": preds}
 
 
 @app.post("/img-echo/", response_class=FileResponse)
